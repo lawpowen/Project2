@@ -101,6 +101,9 @@ struct thread
    struct semaphore sema_child;
    struct list child_process_list;
    struct list_elem child_process_elem;
+   int fd_disc;
+   struct list child_fd_list;
+   
 #endif
 
    /* Owned by thread.c. */

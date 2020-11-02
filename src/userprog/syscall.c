@@ -5,10 +5,22 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "filesys/filesys.h"
+#include "filesys/file.h"
 
 static void syscall_handler(struct intr_frame *);
 bool create(const char *file, unsigned initial_size);
 int write(int fd, const void *buffer, unsigned length);
+int open(const char *file);
+void close(int fd);
+int read(int fd, void *buffer, unsigned size);
+int filesize (int fd);
+
+struct fd_thread_1
+{
+  int fd_;
+  struct list_elem fd_elem;
+  struct file *file_this;
+};
 
 void check_ptr(const void *ptr_to_check)
 {
@@ -76,9 +88,10 @@ syscall_handler(struct intr_frame *f UNUSED)
     unsigned ptr2;
     ptr1 = (const char *)(*((int *)f->esp + 1));
     ptr2 = *((unsigned *)f->esp + 2);
-    //if(ptr1 == NULL) exit(-1);
-    check_ptr(ptr1);
-    if(pagedir_get_page(thread_current()->pagedir, (const void *) ptr1) == NULL){
+    if (ptr1 == NULL)
+      exit(-1);
+    if (pagedir_get_page(thread_current()->pagedir, (const void *)ptr1) == NULL)
+    {
       exit(-1);
     }
     f->eax = create(ptr1, ptr2);
@@ -86,23 +99,44 @@ syscall_handler(struct intr_frame *f UNUSED)
   }
   case SYS_REMOVE:
   {
-    //Implement syscall EXIT
     break;
   }
   case SYS_OPEN:
   {
-    //Implement syscall EXIT
+    const char *ptr1;
+    ptr1 = (const char *)(*((int *)f->esp + 1));
+    if (ptr1 == NULL)
+      exit(-1);
+    if (pagedir_get_page(thread_current()->pagedir, (const void *)ptr1) == NULL)
+    {
+      exit(-1);
+    }
+
+    f->eax = open(ptr1);
+
     break;
+    
   }
   case SYS_FILESIZE:
   {
-    //Implement syscall EXIT
+    get_stack_arguments(f, &args[0], 1);
+
+        /* We return file size of the fd to the process. */
+    f->eax = filesize(args[0]);
     break;
   }
   case SYS_READ:
   {
-    //Implement syscall EXIT
+    int fd = *((int *)f->esp + 1);
+    void *buffer = (void *)(*((int *)f->esp + 2));
+    unsigned size = *((unsigned *)f->esp + 3);
+    if (!is_user_vaddr((const void *)(*((int *)f->esp + 2))))
+      exit(-1);
+    //run the syscall, a function of your own making
+    //since this syscall returns a value, the return value should be stored in f->eax
+    f->eax = read(fd, buffer, size);
     break;
+    
   }
   case SYS_WRITE:
   {
@@ -126,7 +160,8 @@ syscall_handler(struct intr_frame *f UNUSED)
   }
   case SYS_CLOSE:
   {
-    //Implement syscall EXIT
+    int fd = *((int *)f->esp + 1);
+    close(fd);
     break;
   }
   }
@@ -156,4 +191,72 @@ bool create(const char *file, unsigned initial_size)
 {
   bool flag = filesys_create(file, initial_size);
   return flag;
+}
+
+int open(const char *file)
+{
+  struct file *f = filesys_open(file);
+  if (f == NULL)
+    return -1;
+  int ret = thread_current()->fd_disc;
+  struct fd_thread_1 *nf = malloc(sizeof(struct fd_thread_1));
+  nf->fd_ = ret;
+  nf->file_this = f;
+  list_push_front(&thread_current()->child_fd_list, &nf->fd_elem);
+  thread_current()->fd_disc++;
+  return ret;
+}
+
+void close(int fd)
+{
+  for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
+  {
+    //do stuff with iter
+    struct fd_thread_1 *t = list_entry(iter, struct fd_thread_1, fd_elem);
+    if (t->fd_ == fd)
+    {
+      file_close(t->file_this);
+      list_remove(&t->fd_elem);
+      break;
+    }
+  }
+  return;
+}
+
+int read(int fd, void *buffer, unsigned size)
+{
+  if (fd == 0)
+    return input_getc();
+  int ret = -1;
+  if (fd == 1 || list_empty(&thread_current()->child_fd_list))
+  {
+    return 0;
+  }
+  for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
+  {
+    //do stuff with iter
+    struct fd_thread_1 *t = list_entry(iter, struct fd_thread_1, fd_elem);
+    if (t->fd_ == fd)
+    {
+      ret = file_read(t->file_this, buffer, size);
+      break;
+    }
+  }
+  return ret;
+}
+
+int filesize (int fd)
+{
+  int ret = -1;
+  for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
+  {
+    //do stuff with iter
+    struct fd_thread_1 *t = list_entry(iter, struct fd_thread_1, fd_elem);
+    if (t->fd_ == fd)
+    {
+      ret = file_length(t->file_this);
+      break;
+    }
+  }
+  return ret;
 }

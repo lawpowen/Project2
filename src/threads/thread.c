@@ -455,6 +455,8 @@ init_thread(struct thread *t, const char *name, int priority)
 
   list_init(&t->child_process_list);
   sema_init(&t->sema_child, 0);
+  t->fd_disc = 2;
+  list_init(&t->child_fd_list);
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
