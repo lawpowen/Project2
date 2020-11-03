@@ -37,16 +37,19 @@ tid_t process_execute(const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
-  char *saveptr;
+  char *rest;
+  char *token;
+  char *ptr = file_name;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
-  file_name = strtok_r(file_name, " ", &saveptr);
+  
+  token = strtok_r(ptr, " ", &rest);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create(token, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page(fn_copy);
   else
@@ -106,8 +109,6 @@ start_process(void *file_name_)
 int process_wait(tid_t child_tid UNUSED)
 {
   struct thread *t = NULL;
-  if (list_empty(&thread_current()->child_process_list))
-    return -1;
   for (struct list_elem *iter = list_begin(&thread_current()->child_process_list); iter != list_end(&thread_current()->child_process_list); iter = list_next(iter))
   {
     //do stuff with iter
@@ -124,7 +125,7 @@ int process_wait(tid_t child_tid UNUSED)
   }
   list_remove(&t->child_process_elem);
   sema_down(&t->sema_child);
-  return -1;
+  return t->exit_code;
 }
 
 /* Free the current process's resources. */
@@ -485,13 +486,7 @@ setup_stack(void **esp, char *file_name)
         argv[argc] = token;
         argc++;
       }
-      /* for (int i = 0; i <= argc; i++)
-        if (argv[i] != NULL)
-          printf("argv[%d] = '%s'\n", i, argv[i]);
-        else
-          printf("argv[%d] = null\n", i);
-      printf("argc = %d\n", argc); */
-      uint32_t *argv_address[argc];
+      /* uint32_t *argv_address[argc];
       for (int i = argc - 1; i >= 0; i--)
       {
         *esp -= strlen(argv[i]) + 1;
@@ -499,8 +494,7 @@ setup_stack(void **esp, char *file_name)
         argv_address[i] = *esp;
         memcpy(*esp, argv[i], strlen(argv[i]) + 1);
       }
-      
-      
+
       uint32_t tmp1 = 0;
 
       int word_align = (size_t)*esp % 4;
@@ -533,7 +527,44 @@ setup_stack(void **esp, char *file_name)
       byte_size += sizeof(void *);
       memcpy(*esp, &argv[argc], sizeof(void *));
 
-      //hex_dump((uintptr_t)*esp, *esp, byte_size, true);
+      //hex_dump((uintptr_t)*esp, *esp, byte_size, true); */
+      uint32_t *arg_value_pointers[argc];
+
+      /* First add all of the command line arguments in descending order, including
+           the program name. */
+      for (int i = argc - 1; i >= 0; i--)
+      {
+        /* Allocate enough space for the entire string (plus and extra byte for
+             '/0'). Copy the string to the stack, and add its reference to the array
+              of pointers. */
+        *esp = *esp - sizeof(char) * (strlen(argv[i]) + 1);
+        memcpy(*esp, argv[i], sizeof(char) * (strlen(argv[i]) + 1));
+        arg_value_pointers[i] = (uint32_t *)*esp;
+      }
+      /* Allocate space for & add the null sentinel. */
+      *esp = *esp - 4;
+      (*(int *)(*esp)) = 0;
+
+      /* Push onto the stack each char* in arg_value_pointers[] (each of which
+           references an argument that was previously added to the stack). */
+      *esp = *esp - 4;
+      for (int i = argc - 1; i >= 0; i--)
+      {
+        (*(uint32_t **)(*esp)) = arg_value_pointers[i];
+        *esp = *esp - 4;
+      }
+
+      /* Push onto the stack a pointer to the pointer of the address of the
+           first argument in the list of arguments. */
+      (*(uintptr_t **)(*esp)) = *esp + 4;
+
+      /* Push onto the stack the number of program arguments. */
+      *esp = *esp - 4;
+      *(int *)(*esp) = argc;
+
+      /* Push onto the stack a fake return address, which completes stack initialization. */
+      *esp = *esp - 4;
+      (*(int *)(*esp)) = 0;
     }
 
     else

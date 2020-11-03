@@ -103,6 +103,7 @@ struct thread
    struct list_elem child_process_elem;
    int fd_disc;
    struct list child_fd_list;
+   int exit_code;
    
 #endif
 
