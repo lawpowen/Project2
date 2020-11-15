@@ -11,8 +11,7 @@
 #include "threads/init.h"
 #include "threads/palloc.h"
 #include "userprog/pagedir.h"
-
-
+#include "devices/shutdown.h"
 
 static void syscall_handler(struct intr_frame *);
 bool create(const char *file, unsigned initial_size);
@@ -20,9 +19,12 @@ int write(int fd, const void *buffer, unsigned length);
 int open(const char *file);
 void close(int fd);
 int read(int fd, void *buffer, unsigned size);
-int filesize (int fd);
-pid_t exec (const char *cmd_line);
-int wait (pid_t pid);
+int filesize(int fd);
+pid_t exec(const char *cmd_line);
+int wait(pid_t pid);
+bool remove(const char *file);
+unsigned tell(int fd);
+void seek(int fd, unsigned position);
 
 struct fd_thread_1
 {
@@ -57,6 +59,7 @@ syscall_handler(struct intr_frame *f UNUSED)
   case SYS_HALT:
   {
     //Implement syscall HALT
+    shutdown_power_off();
     break;
   }
   case SYS_EXIT:
@@ -107,6 +110,9 @@ syscall_handler(struct intr_frame *f UNUSED)
   }
   case SYS_REMOVE:
   {
+    const char *ptr1;
+    ptr1 = (const char *)(*((int *)f->esp + 1));
+    f->eax = remove(ptr1);
     break;
   }
   case SYS_OPEN:
@@ -123,7 +129,6 @@ syscall_handler(struct intr_frame *f UNUSED)
     f->eax = open(ptr1);
 
     break;
-    
   }
   case SYS_FILESIZE:
   {
@@ -142,7 +147,6 @@ syscall_handler(struct intr_frame *f UNUSED)
     //since this syscall returns a value, the return value should be stored in f->eax
     f->eax = read(fd, buffer, size);
     break;
-    
   }
   case SYS_WRITE:
   {
@@ -161,11 +165,16 @@ syscall_handler(struct intr_frame *f UNUSED)
   case SYS_SEEK:
   {
     //Implement syscall EXIT
+    int fd = *((int *)f->esp + 1);
+    unsigned psd = *((unsigned *)f->esp + 2);
+    seek(fd, psd);
     break;
   }
   case SYS_TELL:
   {
     //Implement syscall EXIT
+    int fd = *((int *)f->esp + 1);
+    f->eax = tell(fd);
     break;
   }
   case SYS_CLOSE:
@@ -227,6 +236,11 @@ int open(const char *file)
   return ret;
 }
 
+bool remove(const char *file)
+{
+  return filesys_remove(file);
+}
+
 void close(int fd)
 {
   for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
@@ -265,7 +279,7 @@ int read(int fd, void *buffer, unsigned size)
   return ret;
 }
 
-int filesize (int fd)
+int filesize(int fd)
 {
   int ret = -1;
   for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
@@ -281,14 +295,44 @@ int filesize (int fd)
   return ret;
 }
 
-pid_t exec (const char *cmd_line)
+pid_t exec(const char *cmd_line)
 {
-  
+
   pid_t id = process_execute(cmd_line);
   return id;
 }
 
-int wait (pid_t pid)
+int wait(pid_t pid)
 {
   return process_wait(pid);
+}
+unsigned tell(int fd)
+{
+  int ret = -1;
+  for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
+  {
+    //do stuff with iter
+    struct fd_thread_1 *t = list_entry(iter, struct fd_thread_1, fd_elem);
+    if (t->fd_ == fd)
+    {
+      ret = file_tell(t->file_this);
+      break;
+    }
+  }
+  return ret;
+}
+
+void seek(int fd, unsigned position)
+{
+  for (struct list_elem *iter = list_begin(&thread_current()->child_fd_list); iter != list_end(&thread_current()->child_fd_list); iter = list_next(iter))
+  {
+    //do stuff with iter
+    struct fd_thread_1 *t = list_entry(iter, struct fd_thread_1, fd_elem);
+    if (t->fd_ == fd)
+    {
+      file_seek(t->file_this, position);
+      break;
+    }
+  }
+  return;
 }
